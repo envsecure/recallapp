@@ -59,10 +59,15 @@ node_version() { node --version 2>/dev/null || echo "0.0.0"; }
 # Is the installed Node new enough? Compares major/minor numerically.
 node_is_current() {
   have_node || return 1
-  local v maj min
-  v="$(node_version)"
-  maj="$(printf '%s' "$v" | sed 's/^v\([0-9]*\)\..*/\1/')"
-  min="$(printf '%s' "$v" | sed 's/^v[0-9]*\.\([0-9]*\).*/\1/')"
+  # Strip the leading "v" and keep only leading digits. A non-numeric result
+  # must become 0, not "0.0.0" — `[ "0.0.0" -gt 22 ]` is an integer-expression
+  # error, which is worse than a clean "too old".
+  local v='' maj=0 min=0
+  v="$(node --version 2>/dev/null | tr -d 'v' || true)"
+  maj="$(printf '%s' "$v" | cut -d. -f1)"
+  min="$(printf '%s' "$v" | cut -d. -f2)"
+  case "$maj" in ''|*[!0-9]*) maj=0 ;; esac
+  case "$min" in ''|*[!0-9]*) min=0 ;; esac
   [ "$maj" -gt "$MIN_MAJOR" ] && return 0
   [ "$maj" -eq "$MIN_MAJOR" ] && [ "$min" -ge "$MIN_MINOR" ] && return 0
   return 1
@@ -179,14 +184,17 @@ install_apt() {
   command -v apt-get >/dev/null 2>&1 || { warn "apt-get not found"; return 1; }
   info "checking whether the distribution ships Node >= ${MIN_MAJOR}.${MIN_MINOR}"
 
-  local candidate
+  local candidate='' cmaj=0 cmin=0
   candidate="$(apt-cache policy nodejs 2>/dev/null | awk '/Candidate:/ {print $2}' | head -1)"
-  local cmaj cmin
-  if [ -n "${candidate:-}" ] && [ "$candidate" != "(none)" ]; then
-    cmaj="$(printf '%s' "$candidate" | sed 's/[^0-9]*\([0-9]*\).*/\1/')"
-    cmin="$(printf '%s' "$candidate" | sed 's/^[0-9]*\.\([0-9]*\).*/\1/')"
+  if [ -n "$candidate" ] && [ "$candidate" != "(none)" ]; then
+    # Same guard as node_is_current: a non-numeric parse must become 0, never
+    # a string that makes `[` fail.
+    cmaj="$(printf '%s' "$candidate" | grep -oE '^[0-9]+' || true)"
+    cmin="$(printf '%s' "$candidate" | sed -nE 's/^[0-9]+\.([0-9]+).*/\1/p')"
+    case "$cmaj" in ''|*[!0-9]*) cmaj=0 ;; esac
+    case "$cmin" in ''|*[!0-9]*) cmin=0 ;; esac
     info "distribution candidate: $candidate"
-    if [ "${cmaj:-0}" -lt "$MIN_MAJOR" ]; then
+    if [ "$cmaj" -lt "$MIN_MAJOR" ]; then
       warn "too old (${candidate} < ${MIN_MAJOR}.${MIN_MINOR}). Use --method nodesource instead."
       return 1
     fi

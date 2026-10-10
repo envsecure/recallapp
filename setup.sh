@@ -88,12 +88,17 @@ step "Checking prerequisites"
 
 node_ok() {
   command -v node >/dev/null 2>&1 || return 1
-  local v maj min
-  v="$(node --version 2>/dev/null || echo 0.0.0)"
-  maj="$(printf '%s' "$v" | sed 's/^v\([0-9]*\)\..*/\1/')"
-  min="$(printf '%s' "$v" | sed 's/^v[0-9]*\.\([0-9]*\).*/\1/')"
-  [ "${maj:-0}" -gt "$MIN_NODE_MAJOR" ] && return 0
-  [ "${maj:-0}" -eq "$MIN_NODE_MAJOR" ] && [ "${min:-0}" -ge "$MIN_NODE_MINOR" ] && return 0
+  # Strip the leading "v" and keep only leading digits. A non-numeric result
+  # must become 0, not "0.0.0" — `[ "0.0.0" -gt 22 ]` is an integer-expression
+  # error, which is worse than a clean "too old".
+  local v='' maj=0 min=0
+  v="$(node --version 2>/dev/null | tr -d 'v' || true)"
+  maj="$(printf '%s' "$v" | cut -d. -f1)"
+  min="$(printf '%s' "$v" | cut -d. -f2)"
+  case "$maj" in ''|*[!0-9]*) maj=0 ;; esac
+  case "$min" in ''|*[!0-9]*) min=0 ;; esac
+  [ "$maj" -gt "$MIN_MAJOR" ] && return 0
+  [ "$maj" -eq "$MIN_MAJOR" ] && [ "$min" -ge "$MIN_MINOR" ] && return 0
   return 1
 }
 
