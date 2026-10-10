@@ -179,6 +179,24 @@ An audit that can be satisfied by deleting the warning is not an audit.
 
 ## Current state
 
-Phases P0–P2 are the v1 target. See `IMPLEMENTATION.md` for what each phase
-requires and how to know it is finished. Start with the earliest phase whose
-"DONE when" conditions are not yet met.
+Phases P0–P5 below are all buildable and testable on this box **using only
+fakes** (`GOAL.md` C2, C3). As of 2026-10-10, P0, P1, P2, P3 and part of P5
+have code written against them; **no real model has ever been executed**,
+because the box cannot download weights.
+
+The authoritative description of what exists is `docs/architecture.md`. When
+this section and that file disagree, that file is right — it is written from
+the code, this one from the plan.
+
+Start with the earliest phase whose "DONE when" conditions are not yet met.
+
+## Verified baseline (2026-10-10)
+
+Reproduce with `npx tsc --noEmit && npx vitest run && npx tsx scripts/benchmark.mjs --count 1000`.
+
+- `tsc --noEmit` exits 0.
+- `vitest run`: 133 tests, 11 files, all passing.
+- Benchmark: 817 of 1000 fixtures indexed, 185 dropped as noise, 0 failed.
+  Index 13615 ms (13.62 ms/file); search p50 1.96 ms / p95 5.11 ms over 817
+  dim-64 vectors; peak RSS 90 MiB. Node v26.7.0. **Fakes only — these figures
+  exclude inference entirely.**

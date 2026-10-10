@@ -12,8 +12,23 @@ and therefore must be written after it exists.
 
 | File | Status | Written after | Authored from |
 |------|--------|---------------|---------------|
-| [runbook.md](runbook.md) | STUB | first working install | real setup commands, verified on a machine |
-| [architecture.md](architecture.md) | STUB | after P2 | actual modules, actual data flow, actual SQL |
+| [runbook.md](runbook.md) | STUB | first working install on a machine with a GPU | real setup commands, verified on a named machine |
+| [architecture.md](architecture.md) | CURRENT | P0–P3, 2026-10-10 | the module graph `src/` actually has, the SQL `src/db/` actually issues, and a per-capability real-vs-fake table |
+
+**Why `runbook.md` is still a stub.** Its completion criteria require every
+command to have been executed on the machine it claims, model disk costs to be
+*measured* rather than estimated, and the troubleshooting section to contain
+only errors that actually occurred. No model has ever been loaded on any machine
+in this repository's history, and the GPU machine does not exist yet. Part of
+§2 (fixture generation, benchmark) is genuinely runnable here, but publishing
+half a runbook with a stub banner in the other half would produce exactly the
+confident-wrong-file outcome the document exists to avoid.
+
+**Why `architecture.md` can be written now.** Its criteria are about the code,
+not about machines: every subsection cites a path under `src/`, §3 states which
+adapters are real and which throw, §8 is non-empty, and SQL is quoted rather
+than reconstructed. All four hold. The code-hash marker means the audit will
+flag the document as `STALE` the moment `src/` moves.
 
 ## The rule
 

@@ -53,8 +53,12 @@ contain words that appear in the image — it may describe the *subject*
   defined behind an interface with a deterministic fake. See `test/fakes/`.
 - **C4 — One model resident at a time.** Explicit load/unload. Never hold OCR +
   VLM + embedder + LLM simultaneously. This is a hard RAM ceiling, not a nicety.
-- **C5 — Single-file database.** SQLite + sqlite-vec in one `.db`. No server,
-  no daemon, no Docker.
+- **C5 — Single-file database.** One `.db`, no server, no daemon, no Docker.
+  *Amended 2026-10-10:* the original text said "SQLite + sqlite-vec". The code
+  uses Node's built-in `node:sqlite` with a brute-force JS vector scan and does
+  **not** use sqlite-vec — no native build step, because this box has no
+  toolchain guarantee. `docs/architecture.md` §8.2 records the divergence. The
+  single-file property this constraint exists to protect still holds.
 
 ### Development environment constraints
 

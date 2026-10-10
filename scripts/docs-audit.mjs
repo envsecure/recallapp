@@ -126,7 +126,11 @@ function audit() {
     // DOC:status=current
     docs.push({ doc: `docs/${name}`, status: "CURRENT", codeHashMatch: "unknown" });
 
-    if (!m.closed) {
+    // `closed` is true when the file literally contains a `<!-- /STUB -->`
+    // close marker. A doc marked current must NOT contain one. (This test was
+    // `!m.closed`, which inverted it: every correctly de-stubbed doc failed and
+    // no doc could ever be promoted to current.)
+    if (m.closed) {
       findings.push({
         doc: `docs/${name}`,
         level: "error",

@@ -165,6 +165,33 @@ describe('SearchService', () => {
       expect(res.summary).toBeDefined();
       expect(res.hits.length).toBeGreaterThan(0);
     });
+
+    it('the summarizer receives the retrieved context, not an empty array', async () => {
+      // Regression guard: `items` is keyed by chunkId. An earlier version
+      // looked up by fileId, which silently produced an empty context and made
+      // every summary content-free while the test suite stayed green.
+      const f = buildFixture();
+      await f.embedder.load();
+      const fid = fileId('f1');
+      const cid = chunkId('c1');
+      f.store.registerFile(fid, new Date(2026, 8, 10));
+      await f.store.upsert([{ chunkId: cid, fileId: fid, vector: new Float32Array(64) }]);
+      f.items.set(cid, { chunkId: cid, fileId: fid, text: 'paging', source: 'ocr' });
+      f.files.set(fid, { path: '/a.png', mtime: new Date(2026, 8, 10) });
+
+      const summarizer = new FakeSummarizer();
+      await summarizer.load();
+      let seen: number = -1;
+      summarizer.summarize = async (_q, ctx) => {
+        seen = ctx.length;
+        return 'x';
+      };
+
+      const svc = new SearchService({ ...f, summarizer }, () => NOW);
+      const res = await svc.search({ q: 'paging' });
+      expect(res.hits.length).toBeGreaterThan(0);
+      expect(seen).toBe(1);
+    });
   });
 
   it('respects a limit', async () => {

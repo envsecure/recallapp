@@ -104,8 +104,11 @@ export class SearchService {
     // Summariser is strictly downstream and strictly optional. A throw here
     // must not lose the hits.
     if (this.deps.summarizer) {
-      const topItems = hits
-        .map((h) => this.deps.items.get(h.fileId satisfies string))
+      // `items` is keyed by chunkId, NOT fileId. Looking up by fileId silently
+      // yielded nothing, so the summariser was always handed an empty context
+      // whenever a summariser was present.
+      const topItems = vectorHits
+        .map((h) => this.deps.items.get(h.chunkId satisfies string))
         .filter((i): i is RetrievedItem => Boolean(i));
       try {
         response.summary = await this.deps.summarizer.summarize(q, topItems);
