@@ -8,6 +8,8 @@
  */
 
 import express, { type Express } from 'express';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { SearchService, SearchResponse } from '@/search/service';
 import type { RecallConfig } from '@/config';
 import { HOST } from '@/config';
@@ -45,6 +47,24 @@ export function createApp(deps: AppDeps): Express {
       }
       throw e;
     }
+  });
+
+  // Serves generated thumbnails. The name is a content-hash cache key
+  // (thumbCacheKey), never user input, and the resolved path is constrained to
+  // the thumbs directory so no traversal is possible.
+  app.get('/thumb/:name', (req, res) => {
+    const name = typeof req.params['name'] === 'string' ? req.params['name'] : '';
+    // Only a bare cache key is servable: no separators, no dots-only names.
+    if (!/^[a-f0-9]+\.webp$/.test(name)) {
+      res.status(400).json({ error: 'invalid thumbnail name' });
+      return;
+    }
+    const file = join(deps.config.paths.thumbDir, name);
+    if (!existsSync(file)) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    res.sendFile(file);
   });
 
   // Explicit 404 so an unrouted path does not fall through to express' HTML
