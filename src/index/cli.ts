@@ -2,24 +2,28 @@
 /**
  * Indexing CLI.
  *
- * On the dev box this runs against the FAKES, because no model can be
- * downloaded here (GOAL.md C2). That is not a workaround — it is how the
- * pipeline is exercised end to end without inference:
+ * Uses real models when their weights are present on disk, deterministic fakes
+ * otherwise. Which one was used is printed on every run — a silent fallback
+ * would let you believe you tested retrieval quality when you tested nothing.
  *
- *   npm run index -- --folder test/fixtures/generated --fake
+ *   npm run index -- --folder ~/Pictures/Screenshots
+ *   npm run index -- --folder ~/Pictures/Screenshots --fake          # force fakes
+ *   npm run index -- --folder ~/Pictures/Screenshots --with-vision  # caption hard cases
  *
- * The `--fake` flag is explicit and required, so nobody can mistake a fake-backed
- * run for a real one.
+ * Weights come from scripts/fetch-models.sh. Nothing is ever downloaded here.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeConfig } from '@/config';
 import { openDb, migrate } from '@/db/sqlite';
 import { SqliteKeywordIndex } from '@/db/keyword';
 import { SqliteVectorStore } from '@/db/vectorstore';
 import { NoiseFilter } from '@/index/filter';
-import { FakeEmbedder, FakeTextExtractor } from '@/index/fakeModels';
+import { Indexer } from '@/index/indexer';
+import { selectCapabilities } from '@/index/capabilities';
+import { availableModels } from '@/index/adapters';
+import { l2Normalise } from '@/search/vector';
 import type { ChunkId, FileId } from '@/interfaces/capabilities';
 
 interface Options {
@@ -27,6 +31,7 @@ interface Options {
   reset: boolean;
   fake: boolean;
   limit: number;
+  withVision: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -39,21 +44,19 @@ function parseArgs(argv: string[]): Options {
     reset: argv.includes('--reset'),
     fake: argv.includes('--fake'),
     limit: Number(flag('limit', '0') ?? '0'),
+    withVision: argv.includes('--with-vision'),
   };
 }
 
 /**
- * Fixture-aware fake pipeline.
- *
- * Reads the manifest the fixture generator writes, so OCR "results" come from
- * the known topic text rather than from the filename. That makes the whole
- * index path — hash, filter, chunk, embed, store — exercisable on a box with no
- * models, with ground truth to assert against.
+ * Ground-truth text for bundled fixtures, read from the manifest the fixture
+ * generator writes. A real screenshot folder has no manifest, so this returns
+ * '' and the OCR result is used instead.
  */
-function fakeTextFor(path: string, manifestDir: string): string {
-  const manifestPath = join(manifestDir, 'manifest.json');
+function fixtureTextFor(path: string, manifestDir: string): string {
+  if (!manifestDir.endsWith('generated')) return '';
   try {
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    const manifest = JSON.parse(readFileSync(join(manifestDir, 'manifest.json'), 'utf8')) as {
       manifest: { file: string; text: string }[];
     };
     const name = path.split('/').pop() ?? '';
@@ -66,22 +69,34 @@ function fakeTextFor(path: string, manifestDir: string): string {
 async function main(): Promise<void> {
   const opts = parseArgs(process.argv.slice(2));
 
-  if (!opts.fake) {
-    console.error(
-      'This build has no runnable model adapters (GOAL.md C2 — the dev box cannot download weights).\n' +
-        'Run with --fake to exercise the pipeline against deterministic fakes.',
-    );
-    process.exit(2);
-  }
   if (!opts.folder) {
-    console.error('usage: npm run index -- --folder <path> --fake [--reset] [--limit N]');
+    console.error('usage: npm run index -- --folder <path> [--fake] [--with-vision] [--reset] [--limit N]');
     process.exit(2);
   }
 
   const config = makeConfig();
+  const installed = availableModels(config.paths.modelDir);
+  if (!opts.fake && installed.length === 0) {
+    console.error(
+      `No models found in ${config.paths.modelDir}.\n` +
+        'Run ./scripts/fetch-models.sh first, or pass --fake to index against deterministic fakes.',
+    );
+    process.exit(2);
+  }
+
+  const caps = await selectCapabilities({
+    modelDir: config.paths.modelDir,
+    fake: opts.fake,
+    withVision: opts.withVision,
+  });
+
+  console.log(`capabilities: ${caps.describe}`);
+  if (!caps.real && !opts.fake) {
+    console.log('WARNING: some models are missing — falling back to fakes for those. Not a real index.');
+  }
+
   const db = openDb(config.paths.dbFile);
   migrate(db);
-
   if (opts.reset) {
     for (const t of ['vectors', 'fts', 'chunks', 'files']) db.exec(`DELETE FROM ${t}`);
     console.log('reset: cleared files, chunks, vectors, fts');
@@ -89,103 +104,84 @@ async function main(): Promise<void> {
 
   const store = new SqliteVectorStore(db);
   const keywordIndex = new SqliteKeywordIndex(db);
-  const embedder = new FakeEmbedder();
-  const extractor = new FakeTextExtractor();
-  await embedder.load();
-  await extractor.load();
+  const indexer = new Indexer({
+    db,
+    extractor: caps.extractor,
+    embedder: caps.embedder,
+    store,
+    keywordIndex,
+    filter: new NoiseFilter(),
+    now: () => new Date(),
+  });
 
-  const { contentHash, perceptualHash, looksSolid } = await import('@/index/filter');
-  const filter = new NoiseFilter();
-
-  const manifestDir = opts.folder;
-  const entries = readdirSync(opts.folder)
-    .filter((f) => /\.(png|jpg|jpeg|webp)$/i.test(f))
-    .slice(0, opts.limit > 0 ? opts.limit : undefined);
-
-  const stats = { indexed: 0, skipped: 0, dropped: 0, failed: 0 };
   const started = Date.now();
-
-  for (const name of entries) {
-    const path = join(opts.folder, name);
-    const hash = contentHash(path);
-    const verdict = filter.check(path, hash, looksSolid(path));
-    if (!verdict.keep) {
-      stats.dropped += 1;
-      continue;
+  let lastLog = 0;
+  const result = await indexer.indexFolder(opts.folder, (p) => {
+    // Rate-limit: on a real folder, printing every image would cost more than
+    // the work it reports.
+    const now = Date.now();
+    if (now - lastLog > 1000 || p.processed + p.skipped + p.failed >= p.total) {
+      lastLog = now;
+      const done = p.processed + p.skipped + p.failed;
+      process.stdout.write(`\r  ${done}/${p.total}  (${p.failed} failed)   `);
     }
+  });
+  process.stdout.write('\n');
 
-    const existing = db.prepare('SELECT status FROM files WHERE content_hash = ?').get(hash) as
-      | { status: string }
-      | undefined;
-    if (existing?.status === 'done') {
-      stats.skipped += 1;
-      continue;
+  // Vision pass over the low-OCR subset only (C6). Roughly 15% of a real
+  // screenshot folder, which is what makes this affordable at all.
+  let visionCount = 0;
+  if (opts.withVision && caps.vision) {
+    const cap = opts.limit > 0 ? opts.limit : 500;
+    const pending = db
+      .prepare("SELECT path FROM files WHERE needs_vision = 1 AND status = 'done' ORDER BY ocr_chars ASC LIMIT ?")
+      .all(cap) as { path: string }[];
+
+    if (pending.length > 0) {
+      console.log(`\nvision pass: ${pending.length} low-OCR image(s) — this is the slow part`);
+      await caps.vision.load();
+      for (const row of pending) {
+        try {
+          const caption = await caps.vision.describe(row.path);
+          if (!caption) continue;
+
+          const vec = l2Normalise(await caps.embedder.embed(caption));
+          const cid = `vision:${row.path}` as ChunkId;
+          const fid = row.path as FileId;
+          db.prepare(
+            'INSERT OR REPLACE INTO chunks(id,file_id,source,text,tokens,ord) VALUES(?,?,?,?,?,?)',
+          ).run(cid, fid, 'vision', caption, Math.ceil(caption.length / 4), 0);
+          await store.upsert([{ chunkId: cid, fileId: fid, vector: vec }]);
+          await keywordIndex.upsert(cid, caption);
+          visionCount += 1;
+          process.stdout.write(`\r  captioned ${visionCount}/${pending.length}   `);
+        } catch (e) {
+          // One bad image must not abort the pass; OCR already contributed text.
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`\n  vision failed for ${row.path}: ${msg}`);
+        }
+      }
+      process.stdout.write('\n');
     }
-
-    const { statSync } = await import('node:fs');
-    const st = statSync(path);
-    const mtimeMs = st.mtimeMs;
-    const fileId = name as FileId;
-    const text = fakeTextFor(path, manifestDir);
-    // (the fixture manifest supplies ground-truth text; the fake extractor's
-    // filename-derived text is only a fallback)
-
-    try {
-      const extracted = await extractor.extract(path);
-      const body = text || extracted.text;
-
-      db.prepare(
-        `INSERT INTO files(id,path,mtime_ms,bytes,content_hash,phash,status,ocr_confidence,ocr_chars,needs_vision,indexed_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(path) DO UPDATE SET mtime_ms=excluded.mtime_ms, bytes=excluded.bytes,
-           content_hash=excluded.content_hash, phash=excluded.phash, status=excluded.status,
-           ocr_confidence=excluded.ocr_confidence, ocr_chars=excluded.ocr_chars,
-           needs_vision=excluded.needs_vision, indexed_at=excluded.indexed_at`,
-      ).run(
-        fileId,
-        path,
-        Math.floor(mtimeMs),
-        (await import('node:fs')).statSync(path).size,
-        hash,
-        perceptualHash(path),
-        'done',
-        extracted.confidence,
-        body.length,
-        body.length < 20 ? 1 : 0,
-        Date.now(),
-      );
-
-      const cid = `${fileId}#0` as ChunkId;
-      db.prepare('DELETE FROM chunks WHERE file_id = ?').run(fileId);
-      db.prepare('INSERT INTO chunks(id,file_id,source,text,tokens,ord) VALUES(?,?,?,?,?,?)').run(
-        cid,
-        fileId,
-        'ocr',
-        body,
-        Math.ceil(body.length / 4),
-        0,
-      );
-
-      const vec = await embedder.embed(body);
-      await store.upsert([{ chunkId: cid, fileId, vector: vec }]);
-      await keywordIndex.upsert(cid, body);
-      keywordIndex.register(cid, fileId);
-
-      stats.indexed += 1;
-      process.stdout.write(`\rindexed ${stats.indexed}/${entries.length}`);
-    } catch {
-      stats.failed += 1;
-    }
+    await caps.vision.unload();
+  } else if (opts.withVision) {
+    console.log('\nvision pass skipped: no vision model installed (./scripts/fetch-models.sh --with-vision)');
   }
 
   const elapsed = Date.now() - started;
-  console.log(`\n\ndone in ${elapsed}ms`);
-  console.log(`  indexed: ${stats.indexed}`);
-  console.log(`  skipped (already done): ${stats.skipped}`);
-  console.log(`  dropped (noise): ${stats.dropped}`);
-  console.log(`  failed: ${stats.failed}`);
-  console.log(`  vectors in store: ${await store.count()}`);
-  console.log(`  db: ${config.paths.dbFile}`);
+  console.log(`\ndone in ${(elapsed / 1000).toFixed(1)}s`);
+  console.log(`  scanned:  ${result.scanned}`);
+  console.log(`  indexed:  ${result.processed}`);
+  console.log(`  skipped:  ${result.skipped} (already done)`);
+  console.log(`  failed:   ${result.failed}`);
+  if (visionCount > 0) console.log(`  captioned: ${visionCount}`);
+  console.log(`  vectors:  ${await store.count()}`);
+  console.log(`  db:       ${config.paths.dbFile}`);
+
+  if (!caps.real && !opts.fake) {
+    console.log('\nThis index was built with fake models. Run ./scripts/fetch-models.sh, then');
+    console.log('re-index with --reset to get real OCR and embeddings.');
+  }
   db.close();
 }
 

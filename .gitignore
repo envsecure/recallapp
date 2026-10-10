@@ -9,7 +9,9 @@ dist/
 build/
 coverage/
 
-# Model weights — never committed. See docs/runbook.md for acquisition.
+# Model weights — never committed, several hundred MB.
+# Fetched by scripts/fetch-models.sh into $RECALL_DATA_DIR/models (default
+# ~/.localrecall/models), which is outside the repo. Listed here as a backstop.
 models/
 *.onnx
 *.onnx_data

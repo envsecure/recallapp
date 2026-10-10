@@ -1,7 +1,7 @@
 # Architecture
 
 <!-- DOC:status=current -->
-<!-- code-hash: c16af5ae11a956ebfd1e6c6598019edc0b5ccc0fcee155e678e1326276b17dff -->
+<!-- code-hash: 44dad1b84d59daf63300a653438de25dee708ae65329d2fcf2fb57b35a2eb06d -->
 
 > **This document describes what exists.** Every claim below cites a file under
 > `src/` or a file under `test/`. Where the code disagrees with
@@ -83,6 +83,7 @@ starts a watcher over a module that does nothing.
 | `src/index/indexer.ts` | `Indexer` — the resumable per-file pipeline | `cli.ts`, tests |
 | `src/index/route.ts` | `decideVision`, `VISION_CONFIDENCE_THRESHOLD`, `VISION_MIN_CHARS` | tests only — see §8.4 |
 | `src/index/cluster.ts` | `clusterFrames` / `clusterSlides` | tests only — see §8.7 |
+| `src/index/capabilities.ts` | `selectCapabilities` — real adapters when weights exist, fakes otherwise | `cli.ts` |
 | `src/index/thumbs.ts` | `ThumbnailService`, `thumbCacheKey`, `thumbDimensions`, **stub encoder** | `/thumb` route serves from disk; nothing generates |
 | `src/index/adapters.ts` | `TesseractExtractor`, `TransformersVision`, `TransformersEmbedder`, `resolveModelPath`, `availableModels` | nothing — see §3 |
 | `src/index/fakeModels.ts` | minimal `FakeTextExtractor`, `FakeEmbedder` for `src/` entrypoints | `cli.ts`, `dev.ts` |
@@ -126,23 +127,40 @@ implements each one today:
 
 | Capability | Declared at | Real implementation | Fake(s) | Has real inference ever run? |
 | --- | --- | --- | --- | --- |
-| `TextExtractor` | `capabilities.ts:50` | `adapters.ts:52` `TesseractExtractor` | `fakeModels.ts:55`; `test/fakes/fakes.ts:111` | **No.** Every method throws. |
-| `VisionDescriber` | `capabilities.ts:63` | `adapters.ts:90` `TransformersVision` | `test/fakes/fakes.ts:153` | **No.** Every method throws. |
-| `Embedder` | `capabilities.ts:74` | `adapters.ts:120` `TransformersEmbedder` | `fakeModels.ts:85`; `test/fakes/fakes.ts:187` | **No.** Every method throws. |
-| `Summarizer` | `capabilities.ts:91` | **none at all** | `test/fakes/fakes.ts:392` | **No.** No implementation exists in `src/`. |
+| `TextExtractor` | `capabilities.ts:50` | `adapters.ts` `TesseractExtractor` | `fakeModels.ts`; `test/fakes/fakes.ts` | **Written, never run.** No weights fetched. |
+| `VisionDescriber` | `capabilities.ts:63` | `adapters.ts` `TransformersVision` | `test/fakes/fakes.ts` | **Written, never run.** Highest-risk item. |
+| `Embedder` | `capabilities.ts:74` | `adapters.ts` `TransformersEmbedder` | `fakeModels.ts`; `test/fakes/fakes.ts` | **Written, never run.** 384d real vs 64d fake. |
+| `Summarizer` | `capabilities.ts:91` | **none at all** | `test/fakes/fakes.ts` | **No.** No implementation exists in `src/`. |
 | `VectorStore` | `capabilities.ts:142` | `db/vectorstore.ts:33` — **real SQLite** | `test/fakes/fakes.ts:269` | n/a — not a model. |
 | `KeywordIndex` | `capabilities.ts:174` | `db/keyword.ts:13` — **real FTS5** | `test/fakes/fakes.ts:352` | n/a |
 | `Thumbnailer` | `capabilities.ts:186` | `index/thumbs.ts:72` — real cache, **stub encoder** | `test/fakes/fakes.ts:416` | **No.** Writes a 1×1 WebP. |
 
 ### What "real" means for the three model adapters
 
-`TesseractExtractor`, `TransformersVision` and `TransformersEmbedder` satisfy
-their interfaces and **every capability method throws
-`AppError('capability_unavailable')`** (`adapters.ts:66-79, 98-112, 127-145`).
-Their `load()` calls `resolveModelPath` first, which throws if
-`<modelDir>/<name>` is absent — and then throws unconditionally anyway, even
-when the directory exists. The file header says so: "none of these are executed
-on the dev box".
+`TesseractExtractor`, `TransformersVision` and `TransformersEmbedder` are now
+**fully implemented** — they load transformers.js / tesseract.js, run inference
+and return real output. What has never happened is that anyone *ran* them: no
+weights have been downloaded, so no model has been loaded on any machine.
+
+`resolveModelPath` still throws `capability_unavailable` when
+`<modelDir>/<name>` is absent, which is the offline guarantee in one place.
+Weights arrive only via `scripts/fetch-models.sh`.
+
+Two details carry that guarantee and are easy to break:
+
+- `env.allowRemoteModels = false` in both transformers.js adapters. The library
+  default is `true`, which would silently fetch weights on first use.
+- `cacheMethod: 'none'` and a pinned `langPath` on tesseract, whose default is
+  to download language packs lazily.
+
+A single `ModelSlot` enforces C4 (one resident model): loading any adapter
+evicts the previous one. It is deliberately a module-level singleton — two
+independent slots would each believe they owned the RAM.
+
+`selectCapabilities` (`index/capabilities.ts`) picks real adapters when weights
+are present and fakes otherwise, and **reports which it chose on every run**,
+because a silent fallback would let you believe you tested retrieval quality
+when you tested none.
 
 `resolveModelPath` (`adapters.ts:26`) is the only real offline guarantee in the
 adapter layer: a weight appears only if a human copied it in. That part is real.
@@ -433,6 +451,11 @@ no module in this repo can hold a model resident because no module can load one.
 ---
 
 ## 8. Known divergences from `../IMPLEMENTATION.md`
+
+> Two modules were added after this section was first written:
+> `index/capabilities.ts` (model selection) and `scripts/fetch-models.sh`
+> (weight acquisition). Both exist because the plan assumed models were already
+> on disk and that adapter selection would be trivial. Neither was.
 
 Required to be non-empty. Each entry cites both what the plan said and what the
 code does.

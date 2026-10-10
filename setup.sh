@@ -2,18 +2,20 @@
 #
 # setup.sh — one-command setup for Recall on Linux.
 #
-# Installs dependencies, generates fixtures, runs the index, and verifies the
-# whole thing works. Safe to re-run: every step is idempotent.
-#
-#   ./setup.sh                    # full setup + verification
-#   ./setup.sh --skip-web         # skip the frontend (saves ~150 MB)
-#   ./setup.sh --no-verify         # set up without running the checks
-#   ./setup.sh --folder <path>     # index your own screenshots instead of fixtures
+#   ./setup.sh                  # full setup, with real models (~1.5 GB download)
+#   ./setup.sh --quick          # no models, fake mode, fast and tiny (~200 MB)
+#   ./setup.sh --with-vision    # + Florence-2 vision model (+1.1 GB)
+#   ./setup.sh --skip-web       # skip the frontend
+#   ./setup.sh --folder <path>  # index your own screenshots, not the fixtures
 #   ./setup.sh --help
 #
-# Everything runs locally. No model weights are downloaded, ever (GOAL.md C1/C2) —
-# this box cannot run them, so the indexer runs against deterministic fakes and
-# says so.
+# MODELS: weights are downloaded ONCE by scripts/fetch-models.sh. After that
+# Recall is fully offline — your images, index and queries never leave the
+# machine (GOAL.md C1). Nothing in the index or search path ever makes a network
+# call; test/index/offline.test.ts enforces that by poisoning http/https/net/tls.
+#
+# --quick skips the download entirely and indexes against deterministic fakes.
+# Useful on a laptop with no spare disk, or just to see the thing run.
 
 set -euo pipefail
 
@@ -21,11 +23,18 @@ set -euo pipefail
 
 SKIP_WEB=0
 NO_VERIFY=0
+QUICK=0
+WITH_VISION=0
 INDEX_FOLDER=""
 DATA_DIR="${RECALL_DATA_DIR:-$HOME/.localrecall}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIN_NODE_MAJOR=22
 MIN_NODE_MINOR=5
+
+# Measured sizes, from scripts/fetch-models.sh against the real repos.
+MODEL_MB=180          # bge-small (int8) + tesseract eng
+VISION_MB=1100        # Florence-2 fp32; ~190 MB extra with --vision-q8
+RUNTIME_MB=450        # onnxruntime-node binaries, pulled by the model deps
 
 # ---------------------------------------------------------------------- output
 
@@ -43,7 +52,7 @@ warn()  { printf '    %s!%s %s\n' "$YELLOW" "$RESET" "$1"; }
 fail()  { printf '\n%sERROR:%s %s\n' "$RED" "$RESET" "$1" >&2; exit 1; }
 
 usage() {
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 }
 
@@ -51,12 +60,14 @@ usage() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --skip-web)  SKIP_WEB=1; shift ;;
-    --no-verify) NO_VERIFY=1; shift ;;
-    --folder)    INDEX_FOLDER="${2:-}"; [ -n "$INDEX_FOLDER" ] || fail "--folder needs a path"; shift 2 ;;
-    --data-dir)  DATA_DIR="${2:-}"; [ -n "$DATA_DIR" ] || fail "--data-dir needs a path"; shift 2 ;;
-    -h|--help)   usage ;;
-    *)           fail "unknown option: $1  (try --help)" ;;
+    --skip-web)    SKIP_WEB=1; shift ;;
+    --no-verify)   NO_VERIFY=1; shift ;;
+    --quick)       QUICK=1; shift ;;
+    --with-vision) WITH_VISION=1; shift ;;
+    --folder)      INDEX_FOLDER="${2:-}"; [ -n "$INDEX_FOLDER" ] || fail "--folder needs a path"; shift 2 ;;
+    --data-dir)    DATA_DIR="${2:-}"; [ -n "$DATA_DIR" ] || fail "--data-dir needs a path"; shift 2 ;;
+    -h|--help)     usage ;;
+    *)             fail "unknown option: $1  (try --help)" ;;
   esac
 done
 
@@ -88,10 +99,21 @@ fi
 
 AVAIL_KB="$(df -Pk "$REPO_ROOT" | awk 'NR==2 {print $4}')"
 AVAIL_MB=$((AVAIL_KB / 1024))
-if [ "$AVAIL_MB" -lt 500 ]; then
-  warn "only ${AVAIL_MB} MB free — a full setup needs roughly 200 MB (70 MB deps + 150 MB web)"
+
+# Work out what this run actually needs, so the warning is not a guess.
+NEED_MB=250   # server+web deps
+if [ "$QUICK" -eq 0 ]; then
+  NEED_MB=$((NEED_MB + RUNTIME_MB + MODEL_MB))
+  [ "$WITH_VISION" -eq 1 ] && NEED_MB=$((NEED_MB + VISION_MB))
+fi
+
+if [ "$AVAIL_MB" -lt "$NEED_MB" ]; then
+  warn "only ${AVAIL_MB} MB free; this needs about ${NEED_MB} MB"
+  if [ "$QUICK" -eq 0 ]; then
+    info "run './setup.sh --quick' to skip the model download entirely"
+  fi
 else
-  ok "${AVAIL_MB} MB free"
+  ok "${AVAIL_MB} MB free (need ~${NEED_MB} MB)"
 fi
 
 info "repo:    $REPO_ROOT"
@@ -102,8 +124,15 @@ info "node:    $NODE_VERSION"
 
 step "Installing dependencies (server)"
 cd "$REPO_ROOT"
-npm install --no-audit --no-fund
-ok "server dependencies installed"
+if [ "$QUICK" -eq 1 ]; then
+  # Skip the optional model runtimes: they pull ~450 MB of onnxruntime binaries
+  # that fake mode never loads.
+  npm install --no-audit --no-fund --omit=optional
+  ok "server dependencies installed (no model runtimes)"
+else
+  npm install --no-audit --no-fund
+  ok "server + model dependencies installed"
+fi
 
 if [ "$SKIP_WEB" -eq 0 ]; then
   step "Installing dependencies (web UI)"
@@ -112,6 +141,23 @@ if [ "$SKIP_WEB" -eq 0 ]; then
   ok "web dependencies installed"
 else
   warn "skipping web UI (--skip-web)"
+fi
+
+# --------------------------------------------------------------------- models
+
+if [ "$QUICK" -eq 1 ]; then
+  step "Skipping models (--quick)"
+  warn "fake mode: indexing will NOT do real OCR or embeddings"
+else
+  step "Fetching model weights"
+  info "embeddings + OCR, ~${MODEL_MB} MB. This is the only step that touches the network."
+  chmod +x "$REPO_ROOT/scripts/fetch-models.sh"
+  if [ "$WITH_VISION" -eq 1 ]; then
+    RECALL_DATA_DIR="$DATA_DIR" "$REPO_ROOT/scripts/fetch-models.sh" --with-vision --dest "$DATA_DIR/models"
+  else
+    RECALL_DATA_DIR="$DATA_DIR" "$REPO_ROOT/scripts/fetch-models.sh" --dest "$DATA_DIR/models"
+  fi
+  ok "models ready in $DATA_DIR/models"
 fi
 
 # ------------------------------------------------------------------ fixtures
@@ -132,15 +178,27 @@ else
   TARGET="$REPO_ROOT/test/fixtures/generated"
 fi
 
-# --fake is mandatory: this build has no runnable model adapters, by design.
-RECALL_DATA_DIR="$DATA_DIR" npm run index -- --folder "$TARGET" --fake
+# --fake forces the deterministic path. Without it the CLI uses whatever real
+# models are installed, and refuses if there are none.
+if [ "$QUICK" -eq 1 ]; then
+  RECALL_DATA_DIR="$DATA_DIR" npm run index -- --folder "$TARGET" --fake
+else
+  if [ "$WITH_VISION" -eq 1 ]; then
+    RECALL_DATA_DIR="$DATA_DIR" npm run index -- --folder "$TARGET" --with-vision
+  else
+    RECALL_DATA_DIR="$DATA_DIR" npm run index -- --folder "$TARGET"
+  fi
+fi
 ok "index written to $DATA_DIR/index.db"
 
 # ------------------------------------------------------------------- verify
 
 if [ "$NO_VERIFY" -eq 1 ]; then
   step "Setup complete (verification skipped)"
-  printf '\n    Next:  %snpm run serve%s\n\n' "$BOLD" "$RESET"
+  if [ "$QUICK" -eq 1 ]; then
+    printf '\n    %sNote: --quick means fake models. Re-run ./setup.sh without it for real OCR.\n\n' "$BOLD"
+  fi
+  printf '    Next:  %snpm run serve%s\n\n' "$BOLD" "$RESET"
   exit 0
 fi
 
@@ -225,8 +283,8 @@ cat <<EOF
 
     Index: $DATA_DIR/index.db
 
-    ${DIM}Note: the indexer ran against deterministic fakes. This machine cannot
-    download or run AI models (GOAL.md C1/C2), so no model weights were fetched
-    and search quality is unverified. See docs/runbook.md §6.${RESET}
+    ${DIM}Models were downloaded once, by scripts/fetch-models.sh. From here on
+    Recall is fully offline: your images, index and queries never leave this
+    machine. Nothing in the index or search path makes a network call.${RESET}
 
 EOF
