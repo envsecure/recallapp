@@ -12,12 +12,24 @@
  * chunks, this is the module to change.
  */
 
-import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createRequire } from 'node:module';
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import { AppError } from '@/errors';
 
-export type SqliteDb = DatabaseSync;
+/**
+ * node:sqlite is loaded through createRequire rather than a static import.
+ *
+ * Vite strips the `node:` prefix from a static specifier and then fails to
+ * resolve a bare "sqlite" package, which breaks every DB test. An indirect
+ * require keeps the specifier out of the module graph the bundler walks.
+ * Node >= 22.5 ships it; it is still flagged experimental, hence the guard.
+ */
+const require_ = createRequire(import.meta.url);
+const { DatabaseSync } = require_('node:sqlite') as { DatabaseSync: typeof DatabaseSyncType };
+
+export type SqliteDb = DatabaseSyncType;
 
 export function openDb(path: string): SqliteDb {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });

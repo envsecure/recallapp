@@ -262,7 +262,9 @@ describe('Indexer', () => {
           now: () => NOW,
         });
 
-        const goodPath = writeFixture(dir, 'good.png', 'good-alpha');
+        // FakeTextExtractor derives text from the filename ("Lecture slide …"),
+        // so the good file needs a long enough stem to clear the chars<20 rule.
+        const goodPath = writeFixture(dir, 'good-paging-slide.png', 'good-alpha');
         const lowPath = writeFixture(dir, 'low.png', 'low-beta');
         extractor.lowConfidencePaths.add(lowPath);
 

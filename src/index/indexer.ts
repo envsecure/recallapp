@@ -72,12 +72,18 @@ function resolveCallback(
   return typeof cb === 'function' ? cb : null;
 }
 
+// NOTE: the extracted method is re-bound to the instance. Returning it bare
+// loses `this`, and `this.meta` inside registerFile then throws.
 function asRegisterFile(
   store: VectorStore,
 ): ((id: FileId, mtime: Date, source: 'ocr' | 'vision') => void) | null {
   const candidate = (store as unknown as Record<string, unknown>)['registerFile'];
   if (typeof candidate === 'function') {
-    return candidate as unknown as (id: FileId, mtime: Date, source: 'ocr' | 'vision') => void;
+    return (candidate as (...a: never[]) => void).bind(store) as unknown as (
+      id: FileId,
+      mtime: Date,
+      source: 'ocr' | 'vision',
+    ) => void;
   }
   return null;
 }
@@ -87,7 +93,10 @@ function asKeywordRegister(
 ): ((id: ChunkId, owner: FileId) => void) | null {
   const candidate = (index as unknown as Record<string, unknown>)['register'];
   if (typeof candidate === 'function') {
-    return candidate as unknown as (id: ChunkId, owner: FileId) => void;
+    return (candidate as (...a: never[]) => void).bind(index) as unknown as (
+      id: ChunkId,
+      owner: FileId,
+    ) => void;
   }
   return null;
 }
