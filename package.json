@@ -1,0 +1,31 @@
+{
+  "name": "recall",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fully-offline semantic search over a folder of images. See GOAL.md.",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "fixtures": "node test/fixtures/generate.mjs",
+    "docs:audit": "node scripts/docs-audit.mjs",
+    "docs:audit:write": "node scripts/docs-audit.mjs --write",
+    "docs:check": "npm run docs:audit",
+    "index": "tsx src/index/cli.ts",
+    "dev": "tsx watch src/index/server.ts"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "express": "^4.22.3"
+  }
+}

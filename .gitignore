@@ -1,0 +1,39 @@
+# Dependencies are installed on demand, on a machine that can afford them.
+#
+# The dev box (2.7 GB RAM, 3.3 GB free disk, no GPU) cannot run models, so
+# nothing here may download weights at install time or at import time.
+# See AGENT.md and GOAL.md C2.
+
+node_modules/
+dist/
+build/
+coverage/
+
+# Model weights — never committed. See docs/runbook.md for acquisition.
+models/
+*.onnx
+*.onnx_data
+*.gguf
+
+# Generated fixtures — regenerate with `npm run fixtures`.
+test/fixtures/generated/
+tmp/
+scratch/
+
+# Local index databases and caches.
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+thumbs/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
