@@ -3,7 +3,7 @@
  * test/.
  *
  * Why these live here and not only in `test/fakes/`:
- *   - `src/index/cli.ts` and `src/index/dev.ts` are the manual run/serve entry
+ *   - `src/index/cli.ts` and `src/index/serve.ts` are the manual run/serve entry
  *     points. They must run on this box, where no model can be loaded (C2), and
  *     AGENT.md forbids `src/` importing from `test/`.
  *   - The test suite's own fakes (`test/fakes/fakes.ts`) are richer: they carry

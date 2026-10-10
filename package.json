@@ -17,7 +17,7 @@
     "docs:audit:write": "node scripts/docs-audit.mjs --write",
     "docs:check": "npm run docs:audit",
     "index": "tsx src/index/cli.ts",
-    "serve": "tsx src/index/dev.ts",
+    "serve": "tsx src/index/serve.ts",
     "benchmark": "tsx scripts/benchmark.mjs"
   },
   "//optionalDependencies": "Model runtimes. Optional so a low-memory machine can install with `npm install --omit=optional` and still run the fake path. They pull onnxruntime-node (~400 MB of binaries).",

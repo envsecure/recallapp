@@ -289,7 +289,7 @@ fi
 # Prove the server actually answers, rather than assuming it does.
 step "Smoke-testing the API"
 cd "$REPO_ROOT"
-RECALL_DATA_DIR="$DATA_DIR" npx tsx src/index/dev.ts >/tmp/recall-setup-server.log 2>&1 &
+RECALL_DATA_DIR="$DATA_DIR" npx tsx src/index/serve.ts >/tmp/recall-setup-server.log 2>&1 &
 SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT

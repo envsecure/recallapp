@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 /**
- * Dev entry point — wires the real SQLite stores to the SearchService.
+ * Production serve entry point — wires the real SQLite stores to the
+ * SearchService and listens on loopback (GOAL.md C1).
  *
- * Runs with fakes, because no model can be loaded on this box (GOAL.md C2).
- * The wiring is real: the same SearchService, SqliteVectorStore and
- * SqliteKeywordIndex the production path uses. Only the two model capabilities
- * (extractor, embedder) are fakes.
+ * The query embedder is selected the same way as indexing
+ * (`selectCapabilities`): real weights when they are on disk, deterministic
+ * fakes otherwise, reported on every run. The query MUST be embedded with
+ * the same model family as the index — a fake 64d query vector scored
+ * against real 384d index vectors is meaningless, which is exactly what an
+ * earlier dev-only entrypoint did.
  */
 
 import { openDb, migrate } from '@/db/sqlite';
@@ -15,15 +18,20 @@ import { makeConfig } from '@/config';
 import { startServer } from '@/index/server';
 import { SearchService } from '@/search/service';
 import type { RetrievedItem } from '@/interfaces/capabilities';
-import { FakeEmbedder } from '@/index/fakeModels';
+import { selectCapabilities } from '@/index/capabilities';
 
 async function main(): Promise<void> {
   const config = makeConfig();
   const db = openDb(config.paths.dbFile);
   migrate(db);
 
-  const embedder = new FakeEmbedder();
-  await embedder.load();
+  // Use the real embedder when its weights are on disk, fakes otherwise.
+  // The query MUST be embedded with the same model family as the index:
+  // dev.ts used to hardcode FakeEmbedder (64d hash) while the index held
+  // real bge vectors (384d), which made every score meaningless.
+  const caps = await selectCapabilities({ modelDir: config.paths.modelDir });
+  console.log(`search embedder: ${caps.describe}`);
+  const embedder = caps.embedder;
 
   const keywordIndex = new SqliteKeywordIndex(db);
 
