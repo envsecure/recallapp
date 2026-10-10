@@ -7,7 +7,13 @@
 #   ./setup.sh --with-vision    # + Florence-2 vision model (+1.1 GB)
 #   ./setup.sh --skip-web       # skip the frontend
 #   ./setup.sh --folder <path>  # index your own screenshots, not the fixtures
+#   ./setup.sh --no-install-node  # fail instead of installing a missing Node
 #   ./setup.sh --help
+#
+# NODE: if Node is missing or older than 22.5, setup.sh installs it for you via
+# scripts/install-node.sh (nvm, no sudo, or NodeSource with sudo). Distribution
+# packages are often too old — Ubuntu 24.04 ships Node 18 — so the installer
+# avoids `apt install nodejs` unless it is genuinely new enough.
 #
 # MODELS: weights are downloaded ONCE by scripts/fetch-models.sh. After that
 # Recall is fully offline — your images, index and queries never leave the
@@ -25,6 +31,7 @@ SKIP_WEB=0
 NO_VERIFY=0
 QUICK=0
 WITH_VISION=0
+AUTO_INSTALL_NODE=1
 INDEX_FOLDER=""
 DATA_DIR="${RECALL_DATA_DIR:-$HOME/.localrecall}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,6 +70,8 @@ while [ $# -gt 0 ]; do
     --skip-web)    SKIP_WEB=1; shift ;;
     --no-verify)   NO_VERIFY=1; shift ;;
     --quick)       QUICK=1; shift ;;
+    --install-node) AUTO_INSTALL_NODE=1; shift ;;
+    --no-install-node) AUTO_INSTALL_NODE=0; shift ;;
     --with-vision) WITH_VISION=1; shift ;;
     --folder)      INDEX_FOLDER="${2:-}"; [ -n "$INDEX_FOLDER" ] || fail "--folder needs a path"; shift 2 ;;
     --data-dir)    DATA_DIR="${2:-}"; [ -n "$DATA_DIR" ] || fail "--data-dir needs a path"; shift 2 ;;
@@ -73,29 +82,51 @@ done
 
 # --------------------------------------------------------------- preconditions
 
+[ -d "$REPO_ROOT/src" ] || { echo "ERROR: cannot find src/ — run this from inside the Recall repo" >&2; exit 1; }
+
 step "Checking prerequisites"
 
-command -v node >/dev/null 2>&1 || fail "node not found. Install Node.js >= ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR} first: https://nodejs.org"
-command -v npm  >/dev/null 2>&1 || fail "npm not found. It ships with Node.js."
+node_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  local v maj min
+  v="$(node --version 2>/dev/null || echo 0.0.0)"
+  maj="$(printf '%s' "$v" | sed 's/^v\([0-9]*\)\..*/\1/')"
+  min="$(printf '%s' "$v" | sed 's/^v[0-9]*\.\([0-9]*\).*/\1/')"
+  [ "${maj:-0}" -gt "$MIN_NODE_MAJOR" ] && return 0
+  [ "${maj:-0}" -eq "$MIN_NODE_MAJOR" ] && [ "${min:-0}" -ge "$MIN_NODE_MINOR" ] && return 0
+  return 1
+}
 
-NODE_VERSION="$(node --version)"
-NODE_MAJOR="$(printf '%s' "$NODE_VERSION" | sed 's/^v\([0-9]*\)\..*/\1/')"
-NODE_MINOR="$(printf '%s' "$NODE_VERSION" | sed 's/^v[0-9]*\.\([0-9]*\).*/\1/')"
-
-# node:sqlite landed in 22.5. Below that, install succeeds and the app crashes
-# on first DB open — a confusing failure, so it is checked up front.
-if [ "$NODE_MAJOR" -lt "$MIN_NODE_MAJOR" ] || { [ "$NODE_MAJOR" -eq "$MIN_NODE_MAJOR" ] && [ "$NODE_MINOR" -lt "$MIN_NODE_MINOR" ]; }; then
-  fail "Node $NODE_VERSION is too old. Recall needs >= ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR} for the built-in node:sqlite module.
-    Install a newer Node (nvm, apt, or https://nodejs.org) and re-run."
+# node:sqlite landed in 22.5. Below that, `npm install` succeeds and the app
+# then crashes on first DB open — a confusing failure, so it is handled up front
+# by installing Node rather than by printing a link and giving up.
+if ! node_ok; then
+  if command -v node >/dev/null 2>&1; then
+    warn "node $(node --version) is too old (need >= ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR})"
+  else
+    warn "node not found (need >= ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR})"
+  fi
+  if [ "$AUTO_INSTALL_NODE" -eq 1 ]; then
+    info "installing Node via scripts/install-node.sh"
+    chmod +x "$REPO_ROOT/scripts/install-node.sh"
+    "$REPO_ROOT/scripts/install-node.sh" || fail "could not install Node — see the instructions it printed"
+    hash -r 2>/dev/null || true
+    node_ok || fail "Node is still not usable after installation. Open a new shell and re-run."
+  else
+    fail "Node >= ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR} is required.
+    Install it:  ./scripts/install-node.sh
+    or re-run with --install-node to do it automatically."
+  fi
 fi
+
+command -v npm >/dev/null 2>&1 || fail "npm missing even though node is present — reinstall Node."
+NODE_VERSION="$(node --version)"
 ok "node $NODE_VERSION"
 
 # node:sqlite is experimental before 22.12 and warns. Not fatal, but worth saying.
 if [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 12 ]; then
   warn "node:sqlite is experimental before 22.12 and will print a warning. Node 22.12+ is quieter."
 fi
-
-[ -d "$REPO_ROOT/src" ] || fail "cannot find src/ — run this script from inside the Recall repo"
 
 AVAIL_KB="$(df -Pk "$REPO_ROOT" | awk 'NR==2 {print $4}')"
 AVAIL_MB=$((AVAIL_KB / 1024))

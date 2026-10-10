@@ -31,7 +31,7 @@ Repo: `~/Desktop/recallapp`.
 
 | Requirement | Version | How it was established |
 |-------------|---------|------------------------|
-| Node.js | ≥ 20.11 declared; **26.7.0 actually used** | `node --version` |
+| Node.js | **≥ 22.5** required; 26.7.0 used here | `node --version`, or `./scripts/install-node.sh --check` |
 | npm | 11.19.0 | `npm --version` |
 | Disk | ~70 MB for `node_modules` | `du -sh node_modules` → 69M |
 | RAM | 2.7 GB is enough *for the fake path* | measured peak 75–93 MiB |
@@ -44,6 +44,30 @@ image encoder later will break this property — see §6.
 
 **Not required:** Docker, Redis, a vector database server, a Python environment.
 All deliberately excluded (`../GOAL.md` N12, N13).
+
+### If Node is missing or too old
+
+`./setup.sh` installs it for you. Standalone:
+
+```bash
+./scripts/install-node.sh            # pick the best method
+./scripts/install-node.sh --check    # report only, change nothing
+./scripts/install-node.sh --method nvm | nodesource | apt
+```
+
+Methods are tried safest-first: **nvm** (no sudo, per-user), then the
+**NodeSource** apt repository (system-wide, needs sudo), then distribution
+packages **only if they are new enough**.
+
+The apt method is deliberately gated. Ubuntu 24.04 ships Node **18.19.1** and
+Debian 12 ships **18**, both below the 22.5 this project needs — `apt install
+nodejs` would succeed and then crash on first database open. The script checks
+`apt-cache policy` first and refuses with a pointer to NodeSource rather than
+installing something that cannot work.
+
+**Why 22.5:** Recall uses Node's built-in `node:sqlite`. Below 22.5 that module
+does not exist, and the failure surfaces when the index opens — well after
+installation appears to have worked.
 
 ---
 
