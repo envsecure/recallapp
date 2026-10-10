@@ -79,12 +79,23 @@ const TRAPS = [
 function writePng(path, width, height, rgb) {
   const raw = Buffer.alloc((width * 3 + 1) * height);
   let o = 0;
+  // A "text band" of varying pixels across the top ~20% of the frame, over a
+  // flat background. Real screenshots are mostly flat with text on top, which
+  // is why they compress well; a full-frame gradient is pathologically
+  // incompressible and produced 148 KB fixtures (3.8 MB for 27 files).
+  const textRows = Math.max(1, Math.floor(height * 0.2));
   for (let y = 0; y < height; y++) {
     raw[o++] = 0; // filter: none
     for (let x = 0; x < width; x++) {
-      raw[o++] = (rgb[0] + x) & 0xff;
-      raw[o++] = (rgb[1] + y) & 0xff;
-      raw[o++] = rgb[2];
+      if (y < textRows) {
+        raw[o++] = (rgb[0] + x * 7) & 0xff;
+        raw[o++] = (rgb[1] + y * 11) & 0xff;
+        raw[o++] = (rgb[2] + x * 3) & 0xff;
+      } else {
+        raw[o++] = 0xf0;
+        raw[o++] = 0xf0;
+        raw[o++] = 0xf0;
+      }
     }
   }
 
@@ -145,17 +156,22 @@ function main() {
     const mtime = new Date(BASE - Math.floor(rand() * 90) * DAY - Math.floor(rand() * DAY));
     const path = join(OUT_DIR, `${String(i).padStart(4, "0")}-${topic.name}.png`);
 
-    writePng(path, 32, 24, [i % 255, (i * 7) % 255, topic.name.length % 255]);
+    // 480x270 ≈ a downscaled lecture slide. Sized so the output lands in the
+    // tens of KB, the range real screenshots occupy and above the noise filter's
+    // MIN_BYTES floor. At 32x24 these compressed to 1.3 KB and were all rejected.
+    writePng(path, 480, 270, [i % 255, (i * 7) % 255, topic.name.length % 255]);
     manifest.push({ file: path.split("/").pop(), topic: topic.name, text: topic.text, keywords: topic.keywords, mtime: mtime.toISOString() });
   }
 
   // Deliberately bad fixtures the noise filter must reject (P1 DONE conditions).
-  const tiny = join(OUT_DIR, "noise-tiny.png");
-  writePng(tiny, 4, 4, [0, 0, 0]);
+  // Solid colour but ABOVE the size floor, so it isolates the solid-colour
+  // rejection from the too-small rejection. Two separate defects, two fixtures.
+  const tiny = join(OUT_DIR, "noise-solid.png");
+  writePng(tiny, 480, 270, [7, 7, 7]);
   writeFileSync(join(OUT_DIR, "noise-too-small.bin"), Buffer.alloc(64, 1)); // 64 bytes
 
   // Exact duplicate of fixture 0000, under a different name.
-  writePng(join(OUT_DIR, "noise-duplicate.png"), 32, 24, [0 % 255, (0 * 7) % 255, TOPICS[0].name.length % 255]);
+  writePng(join(OUT_DIR, "noise-duplicate.png"), 480, 270, [0 % 255, (0 * 7) % 255, TOPICS[0].name.length % 255]);
 
   writeFileSync(
     join(OUT_DIR, "manifest.json"),
