@@ -18,6 +18,11 @@ import { isAppError } from '@/errors';
 export interface AppDeps {
   search: SearchService;
   config: RecallConfig;
+  /**
+   * Resolve an indexed file id (content hash) to its on-disk path.
+   * Absent in tests that only exercise search; when absent, /img/* is 404.
+   */
+  imagePathFor?: (id: string) => string | null;
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -64,6 +69,25 @@ export function createApp(deps: AppDeps): Express {
       res.status(404).json({ error: 'not found' });
       return;
     }
+    res.sendFile(file);
+  });
+
+  // Serves the original indexed images, addressed by content-hash file id.
+  // The id is hex-only and the path always comes from the DB row — never
+  // from user input — so no traversal is possible. Images are served
+  // read-only (GOAL.md N10); nothing here modifies or deletes user files.
+  app.get('/img/:id', (req, res) => {
+    const id = typeof req.params['id'] === 'string' ? req.params['id'] : '';
+    if (!/^[a-f0-9]{16,128}$/.test(id)) {
+      res.status(400).json({ error: 'invalid image id' });
+      return;
+    }
+    const file = deps.imagePathFor?.(id) ?? null;
+    if (!file || !existsSync(file)) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    res.set('Cache-Control', 'private, max-age=86400');
     res.sendFile(file);
   });
 

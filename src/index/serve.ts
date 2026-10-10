@@ -44,8 +44,17 @@ async function main(): Promise<void> {
   const files = new Map<string, { path: string; mtime: Date; thumbUrl?: string }>();
   for (const r of rows) {
     items.set(r.id, { chunkId: r.id as RetrievedItem['chunkId'], fileId: r.file_id as RetrievedItem['fileId'], text: r.text, source: r.source });
-    files.set(r.file_id, { path: r.path, mtime: new Date(r.mtime_ms), thumbUrl: `/thumb/${encodeURIComponent(r.path.split('/').pop() ?? '')}` });
+    files.set(r.file_id, { path: r.path, mtime: new Date(r.mtime_ms), thumbUrl: `/img/${r.file_id}` });
   }
+
+  // Originals served read-only by content-hash id (server.ts /img/:id).
+  const imagePathFor = (id: string): string | null => {
+    if (!/^[a-f0-9]{16,128}$/.test(id)) return null;
+    const row = db.prepare('SELECT path FROM files WHERE id = ?').get(id) as
+      | { path: string }
+      | undefined;
+    return row?.path ?? null;
+  };
 
   const search = new SearchService(
     {
@@ -58,7 +67,7 @@ async function main(): Promise<void> {
     () => new Date(),
   );
 
-  const server = startServer({ search, config });
+  const server = startServer({ search, config, imagePathFor });
 
   console.log(`indexed chunks: ${items.size}`);
   console.log(`db: ${config.paths.dbFile}`);
