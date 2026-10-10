@@ -16,7 +16,8 @@
     "docs:audit:write": "node scripts/docs-audit.mjs --write",
     "docs:check": "npm run docs:audit",
     "index": "tsx src/index/cli.ts",
-    "dev": "tsx watch src/index/server.ts"
+    "serve": "tsx src/index/dev.ts",
+    "benchmark": "tsx scripts/benchmark.mjs"
   },
   "devDependencies": {
     "@types/express": "^4.17.25",

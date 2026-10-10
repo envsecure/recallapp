@@ -12,17 +12,17 @@ and therefore must be written after it exists.
 
 | File | Status | Written after | Authored from |
 |------|--------|---------------|---------------|
-| [runbook.md](runbook.md) | STUB | first working install on a machine with a GPU | real setup commands, verified on a named machine |
+| [runbook.md](runbook.md) | CURRENT (partial) | P0–P3 working, 2026-10-10 | commands executed on the dev box; §3 (real laptop) explicitly unrun |
 | [architecture.md](architecture.md) | CURRENT | P0–P3, 2026-10-10 | the module graph `src/` actually has, the SQL `src/db/` actually issues, and a per-capability real-vs-fake table |
 
-**Why `runbook.md` is still a stub.** Its completion criteria require every
-command to have been executed on the machine it claims, model disk costs to be
-*measured* rather than estimated, and the troubleshooting section to contain
-only errors that actually occurred. No model has ever been loaded on any machine
-in this repository's history, and the GPU machine does not exist yet. Part of
-§2 (fixture generation, benchmark) is genuinely runnable here, but publishing
-half a runbook with a stub banner in the other half would produce exactly the
-confident-wrong-file outcome the document exists to avoid.
+**Why `runbook.md` is marked CURRENT (partial).** Its criteria require every
+command to have been executed on the machine it claims, and model disk costs to
+be *measured*. Sections 1, 2, 4 and 5 meet that: every command was run on the
+named dev box and its real output is quoted. Section 3 — the real laptop — has
+**never been run**, so it is written as a checklist with its sizes labelled
+ESTIMATE, and the document leaves one completion box deliberately unticked rather
+than claiming a measurement nobody took. A runbook that ticks every box by
+guessing is the failure mode this document exists to prevent.
 
 **Why `architecture.md` can be written now.** Its criteria are about the code,
 not about machines: every subsection cites a path under `src/`, §3 states which
@@ -42,11 +42,14 @@ Concretely: `architecture.md` documents the module graph that
 `src/interfaces/` actually declares. `runbook.md` documents commands that were
 actually run successfully on a machine — including which box they ran on.
 
-## Why these two are deferred
+## Why these two were deferred
 
 They are the two documents most likely to be wrong, because both describe
-systems that do not exist yet. A runbook written from the plan documents a
-setup that was never performed. An architecture doc written from the plan
-documents a design that implementation quietly abandoned. Both are worse than
-absent: they read as authoritative and will be trusted by someone who never
-sees the git history.
+systems that did not exist when they were created. A runbook written from the
+plan documents a setup that was never performed. An architecture doc written
+from the plan documents a design that implementation quietly abandoned. Both are
+worse than absent: they read as authoritative and will be trusted by someone
+who never sees the git history.
+
+Both are written now, from evidence — see the status table above for what
+"evidence" meant in each case.
