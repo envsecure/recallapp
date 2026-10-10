@@ -19,7 +19,7 @@ import { openDb, migrate } from '@/db/sqlite';
 import { SqliteKeywordIndex } from '@/db/keyword';
 import { SqliteVectorStore } from '@/db/vectorstore';
 import { NoiseFilter } from '@/index/filter';
-import { FakeEmbedder, FakeTextExtractor, FakeVectorStore } from '@test/fakes/fakes';
+import { FakeEmbedder, FakeTextExtractor } from '@/index/fakeModels';
 import type { ChunkId, FileId } from '@/interfaces/capabilities';
 
 interface Options {
@@ -122,10 +122,13 @@ async function main(): Promise<void> {
       continue;
     }
 
-    const mtimeMs = (await import('node:fs')).statSync(path).mtimeMs;
+    const { statSync } = await import('node:fs');
+    const st = statSync(path);
+    const mtimeMs = st.mtimeMs;
     const fileId = name as FileId;
     const text = fakeTextFor(path, manifestDir);
-    extractor.lowConfidencePaths.has(path);
+    // (the fixture manifest supplies ground-truth text; the fake extractor's
+    // filename-derived text is only a fallback)
 
     try {
       const extracted = await extractor.extract(path);

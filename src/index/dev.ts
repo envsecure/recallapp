@@ -15,7 +15,7 @@ import { makeConfig } from '@/config';
 import { startServer } from '@/index/server';
 import { SearchService } from '@/search/service';
 import type { RetrievedItem } from '@/interfaces/capabilities';
-import { FakeEmbedder } from '@test/fakes/fakes';
+import { FakeEmbedder } from '@/index/fakeModels';
 
 async function main(): Promise<void> {
   const config = makeConfig();
