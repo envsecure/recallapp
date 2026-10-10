@@ -37,3 +37,6 @@ thumbs/
 # Logs
 *.log
 npm-debug.log*
+# web build
+web/node_modules/
+web/dist/
