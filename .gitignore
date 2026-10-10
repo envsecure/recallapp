@@ -39,6 +39,13 @@ thumbs/
 # Logs
 *.log
 npm-debug.log*
+
+# Python bytecode from scripts/*.py
+__pycache__/
+*.py[cod]
+
+# Downloaded test images
+sample-images/
 # web build
 web/node_modules/
 web/dist/
