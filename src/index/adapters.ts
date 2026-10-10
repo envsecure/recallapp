@@ -14,8 +14,11 @@
  *    disabled explicitly (`allowRemoteModels = false`, `cacheMethod: 'none'`)
  *    because that default is the easiest way to break the offline guarantee.
  *
- * 2. **One model resident at a time** (GOAL.md C4). Every adapter takes a
- *    shared `ModelSlot`; loading one evicts the others.
+ * 2. **At most one large ONNX model resident at a time** (GOAL.md C4).
+ *    The transformers.js adapters (`TransformersEmbedder`, `TransformersVision`)
+ *    share a `ModelSlot`; loading one evicts the other. `TesseractExtractor` is
+ *    deliberately exempt — it is a small native worker that must stay resident
+ *    while the embedder runs (the Indexer interleaves extract + embed per file).
  */
 
 import { existsSync, readdirSync } from 'node:fs';
@@ -57,6 +60,14 @@ class ModelSlot {
     const m = this.current;
     this.current = null;
     await m.unload();
+  }
+
+  /**
+   * Clear the residency record without calling unload() — for use *inside*
+   * unload() itself, where calling release() would recurse.
+   */
+  releaseIfCurrent(model: Loadable): void {
+    if (this.current?.name === model.name) this.current = null;
   }
 
   get resident(): string | null {
@@ -115,14 +126,24 @@ export class TesseractExtractor implements TextExtractor {
   }
 
   async load(): Promise<void> {
+    // NOTE: deliberately NOT using the shared ModelSlot. Tesseract is a
+    // lightweight native/WASM worker (~4 MB traineddata), not a large ONNX
+    // model — it must stay resident while the embedder runs, because the
+    // Indexer interleaves extract() and embed() per file. Routing it through
+    // the slot would evict it as soon as the embedder loads, and every
+    // extract() after that would throw "before load()".
+    if (this.worker) return;
     const tessdataDir = resolveModelPath(this.modelDir, `tessdata-${this.langs}`);
-    await SLOT.acquire(this, async () => {
-      const { createWorker } = await import('tesseract.js');
-      this.worker = await createWorker(this.langs, 1, {
-        langPath: tessdataDir,
-        cacheMethod: 'none',
-        cachePath: tessdataDir,
-      });
+    const { createWorker } = await import('tesseract.js');
+    this.worker = await createWorker(this.langs, 1, {
+      langPath: tessdataDir,
+      cacheMethod: 'none',
+      cachePath: tessdataDir,
+      // fetch-models.sh downloads the uncompressed eng.traineddata.
+      // tesseract.js defaults gzip:true and looks for eng.traineddata.gz,
+      // which does not exist — so request the uncompressed name explicitly.
+      // (The worker still gunzips by magic bytes if it ever is gzipped.)
+      gzip: false,
     });
   }
 
@@ -173,6 +194,7 @@ export class TransformersEmbedder implements Embedder {
   }
 
   async load(): Promise<void> {
+    if (this.pipe) return;
     const dir = resolveModelPath(this.modelDir, this.name);
     await SLOT.acquire(this, async () => {
       const { pipeline, env } = await import('@huggingface/transformers');
@@ -206,6 +228,7 @@ export class TransformersEmbedder implements Embedder {
 
   async unload(): Promise<void> {
     this.pipe = null;
+    SLOT.releaseIfCurrent(this);
   }
 }
 
@@ -230,6 +253,7 @@ export class TransformersVision implements VisionDescriber {
   }
 
   async load(): Promise<void> {
+    if (this.pipe) return;
     const dir = resolveModelPath(this.modelDir, this.name);
     await SLOT.acquire(this, async () => {
       const { pipeline, env } = await import('@huggingface/transformers');
@@ -254,5 +278,6 @@ export class TransformersVision implements VisionDescriber {
 
   async unload(): Promise<void> {
     this.pipe = null;
+    SLOT.releaseIfCurrent(this);
   }
 }

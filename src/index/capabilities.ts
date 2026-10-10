@@ -59,7 +59,9 @@ export async function selectCapabilities(opts: SelectOptions): Promise<Capabilit
 
   let extractor: TextExtractor;
   if (hasOcr) {
-    extractor = new TesseractExtractor(opts.modelDir);
+    const real = new TesseractExtractor(opts.modelDir);
+    await real.load();
+    extractor = real;
     parts.push('tesseract OCR');
   } else {
     const fake = new FakeTextExtractor();
@@ -70,7 +72,9 @@ export async function selectCapabilities(opts: SelectOptions): Promise<Capabilit
 
   let embedder: Embedder;
   if (hasEmbed) {
-    embedder = new TransformersEmbedder(opts.modelDir);
+    const real = new TransformersEmbedder(opts.modelDir);
+    await real.load();
+    embedder = real;
     parts.push('bge-small embeddings (384d)');
   } else {
     const fake = new FakeEmbedder();

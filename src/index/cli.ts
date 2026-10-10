@@ -174,6 +174,15 @@ async function main(): Promise<void> {
   console.log(`  indexed:  ${result.processed}`);
   console.log(`  skipped:  ${result.skipped} (already done)`);
   console.log(`  failed:   ${result.failed}`);
+  if (result.failed > 0 && result.errors.length > 0) {
+    // The per-file errors are the actual diagnosis — without them a run that
+    // says "5 failed" gives you nothing to fix. Print the first few.
+    console.log('  errors:');
+    for (const e of result.errors.slice(0, 5)) {
+      console.log(`    - ${e.path}: ${e.error}`);
+    }
+    if (result.errors.length > 5) console.log(`    ... and ${result.errors.length - 5} more`);
+  }
   if (visionCount > 0) console.log(`  captioned: ${visionCount}`);
   console.log(`  vectors:  ${await store.count()}`);
   console.log(`  db:       ${config.paths.dbFile}`);
@@ -183,6 +192,18 @@ async function main(): Promise<void> {
     console.log('re-index with --reset to get real OCR and embeddings.');
   }
   db.close();
+  // Release native resources so the process exits. The tesseract worker keeps
+  // the event loop alive otherwise, and the run appears to hang after "done".
+  try {
+    await caps.extractor.unload();
+  } catch {
+    // Unload is best-effort; indexing already succeeded or failed by now.
+  }
+  try {
+    await caps.embedder.unload();
+  } catch {
+    // Same as above.
+  }
 }
 
 main().catch((e) => {
