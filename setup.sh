@@ -97,8 +97,8 @@ node_ok() {
   min="$(printf '%s' "$v" | cut -d. -f2)"
   case "$maj" in ''|*[!0-9]*) maj=0 ;; esac
   case "$min" in ''|*[!0-9]*) min=0 ;; esac
-  [ "$maj" -gt "$MIN_MAJOR" ] && return 0
-  [ "$maj" -eq "$MIN_MAJOR" ] && [ "$min" -ge "$MIN_MINOR" ] && return 0
+  [ "$maj" -gt "$MIN_NODE_MAJOR" ] && return 0
+  [ "$maj" -eq "$MIN_NODE_MAJOR" ] && [ "$min" -ge "$MIN_NODE_MINOR" ] && return 0
   return 1
 }
 
@@ -127,6 +127,17 @@ fi
 command -v npm >/dev/null 2>&1 || fail "npm missing even though node is present — reinstall Node."
 NODE_VERSION="$(node --version)"
 ok "node $NODE_VERSION"
+
+# Parse the version once, here, and validate numerically.
+#
+# These used to be NODE_MAJOR/NODE_MINOR, assigned inside a check that no longer
+# runs — the 22.12 experimental warning below then referenced variables that did
+# not exist, which under `set -u` is "unbound variable". One parse, one owner.
+NODE_NUMLINE="$(printf '%s' "$NODE_VERSION" | tr -d 'v')"
+NODE_MAJOR="$(printf '%s' "$NODE_NUMLINE" | cut -d. -f1)"
+NODE_MINOR="$(printf '%s' "$NODE_NUMLINE" | cut -d. -f2)"
+case "$NODE_MAJOR" in ''|*[!0-9]*) NODE_MAJOR=0 ;; esac
+case "$NODE_MINOR" in ''|*[!0-9]*) NODE_MINOR=0 ;; esac
 
 # node:sqlite is experimental before 22.12 and warns. Not fatal, but worth saying.
 if [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 12 ]; then
@@ -267,6 +278,12 @@ if node scripts/docs-audit.mjs >/dev/null 2>&1; then
   ok "documentation matches the code"
 else
   warn "docs are stale — run 'npm run docs:audit'"
+fi
+
+if bash scripts/lint-scripts.sh --quiet >/dev/null 2>&1; then
+  ok "shell scripts lint clean"
+else
+  warn "shell script lint failed — run 'npm run lint:scripts'"
 fi
 
 # Prove the server actually answers, rather than assuming it does.

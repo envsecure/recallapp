@@ -344,7 +344,7 @@ npm run serve
 # http://127.0.0.1:5173
 
 # before committing
-npm run typecheck && npm test && npm run docs:audit
+npm run typecheck && npm test && npm run docs:audit && npm run lint:scripts
 ```
 
 `RECALL_DATA_DIR` defaults to `~/.localrecall`. Set it to isolate runs, as every
@@ -355,6 +355,20 @@ command above does, when you want a scratch index.
 ## 5. Troubleshooting
 
 Only failures that actually occurred, with their real text.
+
+**`MIN_MAJOR: unbound variable`, or `[ ...: integer expression expected`**
+A shell script referenced a variable it never assigned, under `set -euo
+pipefail`. This shipped twice in this repo and `bash -n` did not catch either
+one — the syntax was valid, the logic was not.
+
+`npm run lint:scripts` now checks for it: every `$VAR` reference must be
+assigned in the same file, loop variables and `${X:-default}` forms are
+recognised, and numeric comparisons must be digit-guarded. It runs as part of
+`./setup.sh` verification too.
+
+The digit guard is the specific fix for the second error:
+`case "$x" in ''|*[!0-9]*) x=0 ;; esac`. A version string that fails to parse
+becomes `0`, which reads as "too old" — correct, and not a crash.
 
 **`tsx` reports `Top-level await is currently not supported with the "cjs" output format`**
 Running a `.ts` entry through a path Node treats as CommonJS. Fix: run it via

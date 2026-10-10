@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "fixtures": "node test/fixtures/generate.mjs",
+    "lint:scripts": "bash scripts/lint-scripts.sh",
     "docs:audit": "node scripts/docs-audit.mjs",
     "docs:audit:write": "node scripts/docs-audit.mjs --write",
     "docs:check": "npm run docs:audit",
