@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Fully-offline semantic search over a folder of images. See GOAL.md.",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22.5.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
